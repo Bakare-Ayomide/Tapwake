@@ -8,8 +8,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 data class DoubleTapUiState(
-    val isWakeEnabled: Boolean = false,
-    val isSleepEnabled: Boolean = true,
+    val isWakeEnabled: Boolean = true, // ON by default
+    val isSleepEnabled: Boolean = true, // ON by default
     val requiredTaps: Int = 2, // 2, 3, or 4 taps
     val maxTapIntervalMs: Long = 450L, // 300ms to 800ms
     val vibrationEnabled: Boolean = true,
@@ -34,9 +34,9 @@ class MainViewModel : ViewModel() {
                 manufacturer.contains("asus")
 
         val message = if (supportsOemWake) {
-            "Device firmware (${Build.MANUFACTURER}) supports tap-to-wake via system display settings."
+            "Device firmware (${Build.MANUFACTURER}) supports tap-to-wake. Accelerometer wake assist is active."
         } else {
-            "Standard Android firmware on ${Build.MANUFACTURER} ${Build.MODEL} does not natively expose screen-off touch drivers. Proximity wake assist is available."
+            "Accelerometer & proximity wake assist active for ${Build.MANUFACTURER} ${Build.MODEL}."
         }
 
         _uiState.update {
