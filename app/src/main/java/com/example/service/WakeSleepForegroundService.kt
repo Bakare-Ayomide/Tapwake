@@ -58,6 +58,8 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         if (action == ACTION_TOGGLE_OVERLAY) {
             val enable = intent.getBooleanExtra(EXTRA_ENABLE_OVERLAY, false)
             if (enable) showFloatingOverlay() else removeFloatingOverlay()
+        } else if (action == ACTION_TRIGGER_LOCK) {
+            TapSleepAccessibilityService.lockDevice()
         }
         return START_STICKY
     }
@@ -132,6 +134,7 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun showFloatingOverlay() {
         if (isOverlayShown) return
         try {
