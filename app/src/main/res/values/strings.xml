@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">DoubleTap</string>
+    <string name="accessibility_service_description">DoubleTap Accessibility Service locks your screen instantly upon double-tap.</string>
+</resources>

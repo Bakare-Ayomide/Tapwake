@@ -1,0 +1,6 @@
+{
+  "name": "DoubleTap",
+  "description": "Lightweight native Android application for double tap to wake and sleep",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
