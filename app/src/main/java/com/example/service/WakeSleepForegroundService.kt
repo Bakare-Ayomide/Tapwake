@@ -15,7 +15,8 @@ import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.view.GestureDetector
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -35,8 +36,11 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
     private var floatingView: View? = null
     private var isOverlayShown = false
 
-    private val CHANNEL_ID = "tapwake_foreground_channel"
-    private val NOTIF_ID = 1001
+    private var tapCount = 0
+    private var lastTapTime = 0L
+
+    private val CHANNEL_ID = "doubletap_foreground_channel"
+    private val NOTIF_ID = 2002
 
     override fun onCreate() {
         super.onCreate()
@@ -45,9 +49,8 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
 
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("TapWake is active & ready"))
+        startForeground(NOTIF_ID, buildNotification("DoubleTap running in background"))
 
-        // Register proximity sensor listener
         proximitySensor?.let {
             sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
@@ -58,8 +61,8 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         if (action == ACTION_TOGGLE_OVERLAY) {
             val enable = intent.getBooleanExtra(EXTRA_ENABLE_OVERLAY, false)
             if (enable) showFloatingOverlay() else removeFloatingOverlay()
-        } else if (action == ACTION_TRIGGER_LOCK) {
-            TapSleepAccessibilityService.lockDevice()
+        } else if (action == ACTION_LOCK) {
+            DoubleTapAccessibilityService.lockDevice()
         }
         return START_STICKY
     }
@@ -70,37 +73,36 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "TapWake Active Service",
+                "DoubleTap Background Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps double tap wake & sleep service running in background"
+                description = "Maintains wake & sleep gesture detection readiness"
             }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
         }
     }
 
     private fun buildNotification(text: String): Notification {
-        val notificationIntent = Intent(this, MainActivity::class.java)
+        val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent,
+            this, 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         val lockIntent = Intent(this, WakeSleepForegroundService::class.java).apply {
-            action = ACTION_TRIGGER_LOCK
+            action = ACTION_LOCK
         }
-        val lockPendingIntent = PendingIntent.getService(
+        val lockPi = PendingIntent.getService(
             this, 1, lockIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("TapWake Service Running")
+            .setContentTitle("DoubleTap Active")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setSmallIcon(android.R.drawable.ic_lock_power_off)
             .setContentIntent(pendingIntent)
-            .addAction(android.R.drawable.ic_lock_power_off, "Lock Screen", lockPendingIntent)
+            .addAction(android.R.drawable.ic_lock_lock, "Lock", lockPi)
             .setOngoing(true)
             .build()
     }
@@ -109,30 +111,26 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         if (event?.sensor?.type == Sensor.TYPE_PROXIMITY) {
             val distance = event.values[0]
             if (distance < (proximitySensor?.maximumRange ?: 5f)) {
-                wakeUpScreen()
+                try {
+                    if (wakeLock == null) {
+                        wakeLock = powerManager.newWakeLock(
+                            PowerManager.FULL_WAKE_LOCK or
+                                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                                    PowerManager.ON_AFTER_RELEASE,
+                            "DoubleTap:WakeLock"
+                        )
+                    }
+                    if (wakeLock?.isHeld == false) {
+                        wakeLock?.acquire(2000)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-
-    fun wakeUpScreen() {
-        try {
-            if (wakeLock == null) {
-                wakeLock = powerManager.newWakeLock(
-                    PowerManager.FULL_WAKE_LOCK or
-                            PowerManager.ACQUIRE_CAUSES_WAKEUP or
-                            PowerManager.ON_AFTER_RELEASE,
-                    "TapWake:WakeLock"
-                )
-            }
-            if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(3000)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
 
     @Suppress("DEPRECATION")
     private fun showFloatingOverlay() {
@@ -154,16 +152,22 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
                 gravity = Gravity.TOP or Gravity.START
             }
 
-            val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-                override fun onDoubleTap(e: MotionEvent): Boolean {
-                    TapSleepAccessibilityService.lockDevice()
-                    return true
-                }
-            })
-
             val view = FrameLayout(this).apply {
                 setOnTouchListener { _, event ->
-                    gestureDetector.onTouchEvent(event)
+                    if (event.action == MotionEvent.ACTION_DOWN) {
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastTapTime <= maxTapIntervalMs) {
+                            tapCount++
+                        } else {
+                            tapCount = 1
+                        }
+                        lastTapTime = currentTime
+
+                        if (tapCount >= requiredTaps) {
+                            tapCount = 0
+                            triggerAction()
+                        }
+                    }
                     false
                 }
             }
@@ -174,6 +178,23 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    private fun triggerAction() {
+        if (vibrationEnabled) {
+            try {
+                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator?.vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(60)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        DoubleTapAccessibilityService.lockDevice()
     }
 
     private fun removeFloatingOverlay() {
@@ -193,14 +214,16 @@ class WakeSleepForegroundService : Service(), SensorEventListener {
         super.onDestroy()
         removeFloatingOverlay()
         sensorManager?.unregisterListener(this)
-        wakeLock?.let {
-            if (it.isHeld) it.release()
-        }
+        wakeLock?.let { if (it.isHeld) it.release() }
     }
 
     companion object {
         const val ACTION_TOGGLE_OVERLAY = "com.example.ACTION_TOGGLE_OVERLAY"
         const val EXTRA_ENABLE_OVERLAY = "EXTRA_ENABLE_OVERLAY"
-        const val ACTION_TRIGGER_LOCK = "com.example.ACTION_TRIGGER_LOCK"
+        const val ACTION_LOCK = "com.example.ACTION_LOCK"
+
+        var requiredTaps: Int = 2
+        var maxTapIntervalMs: Long = 450L
+        var vibrationEnabled: Boolean = true
     }
 }

@@ -51,6 +51,13 @@ class MainActivity : ComponentActivity() {
                 val uiState by viewModel.uiState.collectAsState()
                 val context = LocalContext.current
 
+                // Sync preferences with Foreground Service static variables
+                LaunchedEffect(uiState.requiredTaps, uiState.maxTapIntervalMs, uiState.vibrationEnabled) {
+                    DoubleTapForegroundService.requiredTaps = uiState.requiredTaps
+                    DoubleTapForegroundService.maxTapIntervalMs = uiState.maxTapIntervalMs
+                    DoubleTapForegroundService.vibrationEnabled = uiState.vibrationEnabled
+                }
+
                 // Start Foreground Service if either wake or sleep is enabled
                 LaunchedEffect(uiState.isWakeEnabled || uiState.isSleepEnabled) {
                     if (uiState.isWakeEnabled || uiState.isSleepEnabled) {
@@ -71,6 +78,9 @@ class MainActivity : ComponentActivity() {
                         uiState = uiState,
                         onToggleWake = { viewModel.toggleWake(it) },
                         onToggleSleep = { viewModel.toggleSleep(it) },
+                        onSelectTaps = { viewModel.setRequiredTaps(it) },
+                        onTapIntervalChange = { viewModel.setMaxTapIntervalMs(it) },
+                        onToggleVibration = { viewModel.toggleVibration(it) },
                         onTestLock = {
                             val locked = DoubleTapAccessibilityService.lockDevice()
                             if (!locked) {
@@ -98,6 +108,9 @@ fun MainScreen(
     uiState: DoubleTapUiState,
     onToggleWake: (Boolean) -> Unit,
     onToggleSleep: (Boolean) -> Unit,
+    onSelectTaps: (Int) -> Unit,
+    onTapIntervalChange: (Long) -> Unit,
+    onToggleVibration: (Boolean) -> Unit,
     onTestLock: () -> Unit,
     onOpenAccessibility: () -> Unit,
     onOpenBatteryOptimization: () -> Unit
@@ -107,7 +120,7 @@ fun MainScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("DoubleTap", fontWeight = FontWeight.Bold) },
+                title = { Text("DoubleTap Preferences", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -166,9 +179,9 @@ fun MainScreen(
                         )
                         Text(
                             text = if (isAccessibilityActive)
-                                "Double-tap to sleep is fully active."
+                                "Screen locking is fully active."
                             else
-                                "Grant Accessibility permission to enable screen locking.",
+                                "Grant Accessibility permission to enable locking.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (isAccessibilityActive)
                                 MaterialTheme.colorScheme.onSecondaryContainer
@@ -179,7 +192,7 @@ fun MainScreen(
                 }
             }
 
-            // Core Switches Section (Two Independent ON/OFF Switches as requested)
+            // Core Switches
             Text(
                 text = "Core Features",
                 style = MaterialTheme.typography.titleLarge,
@@ -192,15 +205,14 @@ fun MainScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Switch 1: Double Tap to Wake
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Double Tap to Wake", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                            Text("Wake screen via hardware / proximity support", style = MaterialTheme.typography.bodySmall)
+                            Text("Wake Assist", fontWeight = FontWeight.Bold)
+                            Text("Proximity / hardware wake monitoring", style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(
                             checked = uiState.isWakeEnabled,
@@ -209,11 +221,8 @@ fun MainScreen(
                         )
                     }
 
-                    // Hardware Support Status for Wake
                     Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        ),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -225,15 +234,14 @@ fun MainScreen(
 
                     Divider()
 
-                    // Switch 2: Double Tap to Sleep
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Double Tap to Sleep", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                            Text("Lock display instantly using Accessibility", style = MaterialTheme.typography.bodySmall)
+                            Text("Double Tap to Sleep", fontWeight = FontWeight.Bold)
+                            Text("Lock display instantly on tap pattern", style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(
                             checked = uiState.isSleepEnabled,
@@ -244,9 +252,79 @@ fun MainScreen(
                 }
             }
 
-            // Setup & Permissions
+            // Advanced Preferences: Number of Taps & Speed
             Text(
-                text = "Configuration & Permissions",
+                text = "Gesture Preferences",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Number of taps selector
+                    Text("Number of Taps Required: ${uiState.requiredTaps}", fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(2, 3, 4).forEach { count ->
+                            FilterChip(
+                                selected = uiState.requiredTaps == count,
+                                onClick = { onSelectTaps(count) },
+                                label = { Text("$count Taps") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Tap Speed / Time Window slider
+                    Text("Tap Speed Window: ${uiState.maxTapIntervalMs} ms", fontWeight = FontWeight.Bold)
+                    Text("Maximum interval allowed between taps", style = MaterialTheme.typography.bodySmall)
+                    Slider(
+                        value = uiState.maxTapIntervalMs.toFloat(),
+                        onValueChange = { onTapIntervalChange(it.toLong()) },
+                        valueRange = 250f..800f,
+                        steps = 10,
+                        modifier = Modifier.testTag("slider_tap_speed")
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Fast (250ms)", style = MaterialTheme.typography.bodySmall)
+                        Text("Relaxed (800ms)", style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    Divider()
+
+                    // Vibration feedback toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Vibration Feedback", fontWeight = FontWeight.Bold)
+                            Text("Haptic pulse on successful lock", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(
+                            checked = uiState.vibrationEnabled,
+                            onCheckedChange = onToggleVibration,
+                            modifier = Modifier.testTag("switch_vibration")
+                        )
+                    }
+                }
+            }
+
+            // Permissions & Setup
+            Text(
+                text = "Setup & Permissions",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -259,46 +337,19 @@ fun MainScreen(
                 ) {
                     Button(
                         onClick = onOpenAccessibility,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("btn_accessibility")
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Settings, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Open Accessibility Settings")
+                        Text("Enable Accessibility Service")
                     }
 
                     OutlinedButton(
                         onClick = onOpenBatteryOptimization,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("btn_battery")
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Disable Battery Optimization")
                     }
-                }
-            }
-
-            // GitHub Actions APK Build info
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "🚀 GitHub Actions APK Build",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Workflow configured at .github/workflows/android.yml to automatically build, verify, and upload APK artifacts upon push or manual trigger.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
                 }
             }
         }

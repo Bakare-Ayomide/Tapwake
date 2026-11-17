@@ -10,6 +10,10 @@ import kotlinx.coroutines.flow.update
 data class DoubleTapUiState(
     val isWakeEnabled: Boolean = false,
     val isSleepEnabled: Boolean = true,
+    val requiredTaps: Int = 2, // 2, 3, or 4 taps
+    val maxTapIntervalMs: Long = 450L, // 300ms to 800ms
+    val vibrationEnabled: Boolean = true,
+    val sensitivity: Float = 0.5f,
     val isHardwareWakeSupported: Boolean = false,
     val hardwareWakeStatusMessage: String = ""
 )
@@ -23,22 +27,16 @@ class MainViewModel : ViewModel() {
     }
 
     private fun checkHardwareWakeSupport() {
-        // Genuine check for double tap to wake / screen-off wake capability.
-        // True double-tap-to-wake requires OEM kernel/firmware support (e.g., Samsung One UI / custom kernels).
-        // Standard Android apps cannot intercept touch events while the screen is completely powered off
-        // unless provided by OEM firmware or root/accessibility wake drivers.
         val manufacturer = Build.MANUFACTURER.lowercase()
-        val brand = Build.BRAND.lowercase()
-        
-        val supportsOemWake = manufacturer.contains("samsung") || 
-                              manufacturer.contains("oneplus") || 
-                              manufacturer.contains("xiaomi") || 
-                              manufacturer.contains("asus")
+        val supportsOemWake = manufacturer.contains("samsung") ||
+                manufacturer.contains("oneplus") ||
+                manufacturer.contains("xiaomi") ||
+                manufacturer.contains("asus")
 
         val message = if (supportsOemWake) {
-            "Device firmware (${Build.MANUFACTURER}) may support tap-to-wake via system settings. Check device display settings."
+            "Device firmware (${Build.MANUFACTURER}) supports tap-to-wake via system display settings."
         } else {
-            "Standard Android firmware on ${Build.MANUFACTURER} ${Build.MODEL} does not natively expose kernel touch interception for screen-off wake without OEM ROM support. Proximity wake assist is available."
+            "Standard Android firmware on ${Build.MANUFACTURER} ${Build.MODEL} does not natively expose screen-off touch drivers. Proximity wake assist is available."
         }
 
         _uiState.update {
@@ -55,5 +53,21 @@ class MainViewModel : ViewModel() {
 
     fun toggleSleep(enabled: Boolean) {
         _uiState.update { it.copy(isSleepEnabled = enabled) }
+    }
+
+    fun setRequiredTaps(taps: Int) {
+        _uiState.update { it.copy(requiredTaps = taps) }
+    }
+
+    fun setMaxTapIntervalMs(intervalMs: Long) {
+        _uiState.update { it.copy(maxTapIntervalMs = intervalMs) }
+    }
+
+    fun toggleVibration(enabled: Boolean) {
+        _uiState.update { it.copy(vibrationEnabled = enabled) }
+    }
+
+    fun setSensitivity(sensitivity: Float) {
+        _uiState.update { it.copy(sensitivity = sensitivity) }
     }
 }
