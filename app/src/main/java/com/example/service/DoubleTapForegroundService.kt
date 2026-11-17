@@ -72,7 +72,7 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
         startForeground(NOTIF_ID, buildNotification("DoubleTap floating service active"))
 
         accelerometer?.let {
-            sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST)
+            sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
         proximitySensor?.let {
             sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
