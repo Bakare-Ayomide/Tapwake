@@ -7,7 +7,6 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -18,11 +17,12 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
+import android.widget.FrameLayout
 import androidx.core.app.NotificationCompat
 import com.example.ui.MainActivity
 
@@ -30,6 +30,7 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
 
     private lateinit var powerManager: PowerManager
     private var wakeLock: PowerManager.WakeLock? = null
+    private var partialWakeLock: PowerManager.WakeLock? = null
     private var sensorManager: SensorManager? = null
     private var accelerometer: Sensor? = null
     private var proximitySensor: Sensor? = null
@@ -54,8 +55,20 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
         accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
 
+        // Acquire partial wake lock to keep sensor monitoring active in background
+        try {
+            partialWakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "DoubleTap:PartialWakeLock"
+            ).apply {
+                acquire()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("DoubleTap running (Wake & Sleep active)"))
+        startForeground(NOTIF_ID, buildNotification("DoubleTap global service active"))
 
         accelerometer?.let {
             sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
@@ -69,9 +82,14 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
         val action = intent?.action
         if (action == ACTION_TOGGLE_OVERLAY) {
             val enable = intent.getBooleanExtra(EXTRA_ENABLE_OVERLAY, true)
-            if (enable) showFloatingOverlay() else removeFloatingOverlay()
+            if (enable) showGlobalOverlay() else removeGlobalOverlay()
         } else if (action == ACTION_LOCK) {
             DoubleTapAccessibilityService.lockDevice()
+        } else {
+            // Default start: ensure global overlay is shown if sleep is enabled
+            if (isSleepEnabled) {
+                showGlobalOverlay()
+            }
         }
         return START_STICKY
     }
@@ -82,10 +100,10 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "DoubleTap Background Service",
+                "DoubleTap Global Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Maintains wake & sleep gesture detection"
+                description = "Global double tap wake & sleep service"
             }
             getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
         }
@@ -117,15 +135,16 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        if (event == null) return
+        if (event == null || !isWakeEnabled) return
 
-        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER && isWakeEnabled) {
+        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
             val x = event.values[0]
             val y = event.values[1]
             val z = event.values[2]
 
+            // G-force threshold for device tap/knock detection
             val gForce = Math.sqrt((x * x + y * y + z * z).toDouble()) / 9.80665
-            if (gForce > 2.0) {
+            if (gForce > 2.2) {
                 val now = System.currentTimeMillis()
                 if (now - lastWakeTapTime <= maxTapIntervalMs) {
                     wakeTapCount++
@@ -139,7 +158,7 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
                     wakeUpScreen()
                 }
             }
-        } else if (event.sensor.type == Sensor.TYPE_PROXIMITY && isWakeEnabled) {
+        } else if (event.sensor.type == Sensor.TYPE_PROXIMITY) {
             val distance = event.values[0]
             if (distance < (proximitySensor?.maximumRange ?: 5f)) {
                 wakeUpScreen()
@@ -168,13 +187,16 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
     }
 
     @Suppress("DEPRECATION")
-    private fun showFloatingOverlay() {
-        if (isOverlayShown) return
+    private fun showGlobalOverlay() {
+        if (isOverlayShown || !isSleepEnabled) return
         try {
             windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            
+            // Create a transparent top/status bar or edge gesture touch interceptor overlay
+            // that doesn't block normal app touches (FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL)
             val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                150, // top status bar / gesture detection zone
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 else
@@ -184,38 +206,27 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
                         WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
                 PixelFormat.TRANSLUCENT
             ).apply {
-                gravity = Gravity.TOP or Gravity.END
-                x = 30
-                y = 200
+                gravity = Gravity.TOP or Gravity.START
             }
 
-            val button = Button(this).apply {
-                text = "⚡"
-                textSize = 18f
-                setBackgroundColor(Color.parseColor("#806750A4"))
-                setTextColor(Color.WHITE)
-                setPadding(20, 10, 20, 10)
-                setOnTouchListener { _, event ->
-                    if (event.action == MotionEvent.ACTION_DOWN && isSleepEnabled) {
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastTapTime <= maxTapIntervalMs) {
-                            tapCount++
-                        } else {
-                            tapCount = 1
-                        }
-                        lastTapTime = currentTime
-
-                        if (tapCount >= requiredTaps) {
-                            tapCount = 0
-                            triggerSleepAction()
-                        }
+            val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDoubleTap(e: MotionEvent): Boolean {
+                    if (isSleepEnabled) {
+                        triggerSleepAction()
                     }
-                    false
+                    return true
+                }
+            })
+
+            val view = FrameLayout(this).apply {
+                setOnTouchListener { _, event ->
+                    gestureDetector.onTouchEvent(event)
+                    false // pass touch through to underlying app/home screen
                 }
             }
 
-            windowManager?.addView(button, params)
-            floatingView = button
+            windowManager?.addView(view, params)
+            floatingView = view
             isOverlayShown = true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -227,10 +238,10 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
             try {
                 val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(VibrationEffect.createOneShot(70, VibrationEffect.DEFAULT_AMPLITUDE))
+                    vibrator?.vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE))
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator?.vibrate(70)
+                    vibrator?.vibrate(60)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -239,7 +250,7 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
         DoubleTapAccessibilityService.lockDevice()
     }
 
-    private fun removeFloatingOverlay() {
+    private fun removeGlobalOverlay() {
         if (!isOverlayShown) return
         try {
             if (floatingView != null) {
@@ -254,9 +265,10 @@ class DoubleTapForegroundService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        removeFloatingOverlay()
+        removeGlobalOverlay()
         sensorManager?.unregisterListener(this)
         wakeLock?.let { if (it.isHeld) it.release() }
+        partialWakeLock?.let { if (it.isHeld) it.release() }
     }
 
     companion object {
