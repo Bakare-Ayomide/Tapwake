@@ -11,11 +11,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -23,21 +20,15 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.AppPreferences
 import com.example.data.PreferencesRepository
 import com.example.service.DoubleTapDeviceAdminReceiver
@@ -227,7 +218,56 @@ fun DoubleTapSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Section 1: 4 Independent Core Controls
+            // Section 1 (Placed at the VERY TOP as requested): Permissions & System Access
+            Text(
+                text = "Permissions & System Access",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    PermissionRow(
+                        title = "1. Accessibility Service",
+                        subtitle = "Required for system-wide Double Tap to Sleep & biometric-friendly screen locking",
+                        isGranted = deviceState.isAccessibilityGranted,
+                        actionLabel = "Enable",
+                        onActionClick = onOpenAccessibility,
+                        testTag = "btn_accessibility"
+                    )
+
+                    HorizontalDivider()
+
+                    PermissionRow(
+                        title = "2. Appear on Top (Overlay)",
+                        subtitle = "Required for Floating Lock Button to appear over other apps",
+                        isGranted = deviceState.isOverlayGranted,
+                        actionLabel = "Grant",
+                        onActionClick = onOpenOverlaySettings,
+                        testTag = "btn_overlay_permission"
+                    )
+
+                    HorizontalDivider()
+
+                    PermissionRow(
+                        title = "3. Device Administrator",
+                        subtitle = "Alternative hardware lock mechanism if Accessibility is not used",
+                        isGranted = deviceState.isDeviceAdminGranted,
+                        actionLabel = "Enable",
+                        onActionClick = onOpenDeviceAdmin,
+                        testTag = "btn_device_admin"
+                    )
+                }
+            }
+
+            // Section 2: 4 Independent Core Controls
             Text(
                 text = "Core Controls",
                 style = MaterialTheme.typography.titleLarge,
@@ -239,7 +279,7 @@ fun DoubleTapSettingsScreen(
             val dtSleepStatus = when {
                 !prefs.doubleTapToSleepEnabled -> "Supported (Switched OFF)"
                 deviceState.isAccessibilityGranted -> "Supported and active (System-wide across all apps)"
-                else -> "Permission required (Enable Accessibility Service)"
+                else -> "Permission required (Enable Accessibility Service above)"
             }
             val dtSleepActive = prefs.doubleTapToSleepEnabled && deviceState.isAccessibilityGranted
 
@@ -368,55 +408,6 @@ fun DoubleTapSettingsScreen(
                 onCheckedChange = onToggleShakeWake,
                 testTag = "switch_shake_wake"
             )
-
-            // Section 2: Permissions Status (Never nags for already granted permissions)
-            Text(
-                text = "Permissions & System Access",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    PermissionRow(
-                        title = "Accessibility Service",
-                        subtitle = "Required for system-wide Double Tap to Sleep & biometric-friendly screen locking",
-                        isGranted = deviceState.isAccessibilityGranted,
-                        actionLabel = "Enable",
-                        onActionClick = onOpenAccessibility,
-                        testTag = "btn_accessibility"
-                    )
-
-                    HorizontalDivider()
-
-                    PermissionRow(
-                        title = "Appear on Top (Overlay)",
-                        subtitle = "Required for Floating Lock Button to appear over other apps",
-                        isGranted = deviceState.isOverlayGranted,
-                        actionLabel = "Grant",
-                        onActionClick = onOpenOverlaySettings,
-                        testTag = "btn_overlay_permission"
-                    )
-
-                    HorizontalDivider()
-
-                    PermissionRow(
-                        title = "Device Administrator",
-                        subtitle = "Alternative hardware lock mechanism if Accessibility is not used",
-                        isGranted = deviceState.isDeviceAdminGranted,
-                        actionLabel = "Enable",
-                        onActionClick = onOpenDeviceAdmin,
-                        testTag = "btn_device_admin"
-                    )
-                }
-            }
 
             // Section 3: Gesture & Floating Button Preferences
             Text(
